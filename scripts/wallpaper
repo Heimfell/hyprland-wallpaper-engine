@@ -1,0 +1,50 @@
+#!/bin/bash
+
+CONF_FILE="$HOME/.config/hypr/wallpaper-engine.conf"
+[ -f "$CONF_FILE" ] && source "$CONF_FILE"
+
+STATE_FILE="$HOME/.config/hypr/wallpaper-engine-state"
+STEAM_DIR="${STEAM_DIR:-$HOME/.local/share/Steam}"
+STEAM_WP="$STEAM_DIR/steamapps/workshop/content/431960"
+WE_ASSETS="$STEAM_DIR/steamapps/common/wallpaper_engine"
+MONITOR="${MONITOR:-$(hyprctl monitors -j 2>/dev/null | python3 -c 'import json,sys; print(json.load(sys.stdin)[0]["name"])' 2>/dev/null)}"
+FPS="${FPS:-30}"
+
+if [ -z "$MONITOR" ]; then
+  MONITOR="DP-1"
+fi
+
+action="${1:-}"
+
+case "$action" in
+  stop)
+    systemctl --user stop wallpaperengine-scene 2>/dev/null
+    pkill mpvpaper 2>/dev/null
+    notify-send "Wallpaper Engine" "Stopped"
+    ;;
+  start)
+    if [ ! -f "$STATE_FILE" ]; then
+      echo "No previous wallpaper. Run wallpaper-select first."
+      exit 1
+    fi
+    IFS='|' read -r type file < "$STATE_FILE"
+    if [ "$type" = "VIDEO" ]; then
+      if [ -f "$file" ]; then
+        mpvpaper -f -o "no-audio --loop --panscan=1.0 --hwdec=auto --profile=fast --fps=15" "$MONITOR" "$file" &
+      else
+        echo "Video file not found: $file"
+        exit 1
+      fi
+    else
+      if [ ! -f "$HOME/.config/systemd/user/wallpaperengine-scene.service" ]; then
+        echo "Scene service not configured. Run wallpaper-select first."
+        exit 1
+      fi
+      systemctl --user start wallpaperengine-scene 2>/dev/null
+    fi
+    notify-send "Wallpaper Engine" "Resumed"
+    ;;
+  *)
+    exec wallpaper-select
+    ;;
+esac

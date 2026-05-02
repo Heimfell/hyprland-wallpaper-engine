@@ -1,0 +1,19 @@
+#!/bin/bash
+
+CONF_FILE="$HOME/.config/hypr/wallpaper-engine.conf"
+[ -f "$CONF_FILE" ] && source "$CONF_FILE"
+
+STEAM_DIR="${STEAM_DIR:-$HOME/.local/share/Steam}"
+STEAM_WP="$STEAM_DIR/steamapps/workshop/content/431960"
+
+video=$(find "$STEAM_WP" -maxdepth 2 \( -name "*.mp4" -o -name "*.webm" \) 2>/dev/null | wc -l)
+scenes=$(find "$STEAM_WP" -maxdepth 2 -name "project.json" 2>/dev/null | wc -l)
+
+echo "Video wallpapers: $video"
+echo "Scene wallpapers: $((scenes - video))"
+echo "Total: $scenes"
+echo ""
+echo "Service status:"
+systemctl --user status wallpaperengine-scene 2>/dev/null | head -5 || echo "  No active scene"
+echo ""
+pgrep mpvpaper > /dev/null 2>/dev/null && echo "mpvpaper: active" || echo "mpvpaper: inactive"

@@ -1,0 +1,51 @@
+#!/bin/bash
+
+CONF_FILE="$HOME/.config/hypr/wallpaper-engine.conf"
+[ -f "$CONF_FILE" ] && source "$CONF_FILE"
+
+STATE_FILE="$HOME/.config/hypr/wallpaper-engine-state"
+STEAM_DIR="${STEAM_DIR:-$HOME/.local/share/Steam}"
+WE_ASSETS="$STEAM_DIR/steamapps/common/wallpaper_engine"
+SERVICE_FILE="$HOME/.config/systemd/user/wallpaperengine-scene.service"
+MONITOR="${MONITOR:-$(hyprctl monitors -j 2>/dev/null | python3 -c 'import json,sys; print(json.load(sys.stdin)[0]["name"])' 2>/dev/null)}"
+FPS="${FPS:-30}"
+
+if [ -z "$MONITOR" ]; then
+  MONITOR="DP-1"
+fi
+
+if [ ! -f "$STATE_FILE" ]; then
+  exit 0
+fi
+
+for i in $(seq 1 10); do
+  hyprctl monitors > /dev/null 2>&1 && break
+  sleep 1
+done
+
+IFS='|' read -r type file < "$STATE_FILE"
+
+if [ -z "$type" ] || [ -z "$file" ]; then
+  exit 0
+fi
+
+if [ "$type" = "VIDEO" ]; then
+  if [ -f "$file" ]; then
+    mpvpaper -f -o "no-audio --loop --panscan=1.0 --hwdec=auto --profile=fast --fps=15" "$MONITOR" "$file" &
+  fi
+else
+  if [ -d "$HOME/.config/systemd/user" ]; then
+    systemctl --user start wallpaperengine-scene 2>/dev/null
+    sleep 4
+    if ! systemctl --user is-active wallpaperengine-scene > /dev/null 2>&1; then
+      systemctl --user stop wallpaperengine-scene 2>/dev/null
+      STEAM_WP="$STEAM_DIR/steamapps/workshop/content/431960"
+      dir=$(find "$STEAM_WP" -maxdepth 2 -type d -name "$file" 2>/dev/null | head -1)
+      preview=$(ls "$dir"/preview.{jpg,png,gif} 2>/dev/null | head -1)
+      if [ -n "$preview" ]; then
+        mpvpaper -f -o "no-audio --loop --panscan=1.0 --hwdec=auto --profile=fast --fps=15" "$MONITOR" "$preview" &
+        echo "VIDEO|$preview" > "$STATE_FILE"
+      fi
+    fi
+  fi
+fi

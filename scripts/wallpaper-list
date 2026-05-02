@@ -1,0 +1,25 @@
+#!/bin/bash
+
+CONF_FILE="$HOME/.config/hypr/wallpaper-engine.conf"
+[ -f "$CONF_FILE" ] && source "$CONF_FILE"
+
+STEAM_DIR="${STEAM_DIR:-$HOME/.local/share/Steam}"
+STEAM_WP="$STEAM_DIR/steamapps/workshop/content/431960"
+
+echo "Scanning Steam Workshop wallpapers..."
+echo "(Make sure Wallpaper Engine is installed in Steam)"
+echo ""
+
+if [ ! -d "$STEAM_WP" ]; then
+  echo "Wallpaper directory not found."
+  echo "Open Wallpaper Engine in Steam and subscribe to some wallpapers first."
+  exit 1
+fi
+
+find "$STEAM_WP" -maxdepth 2 -name "project.json" 2>/dev/null | while read -r f; do
+  dir=$(dirname "$f")
+  title=$(python3 -c 'import json,sys; print(json.load(sys.stdin).get("title","?"))' < "$f" 2>/dev/null)
+  type=$(python3 -c 'import json,sys; print(json.load(sys.stdin).get("type","?"))' < "$f" 2>/dev/null)
+  id=$(basename "$dir")
+  printf "%-10s %-8s %s\n" "$id" "$type" "$title"
+done

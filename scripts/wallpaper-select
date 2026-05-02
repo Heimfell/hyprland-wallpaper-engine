@@ -1,0 +1,199 @@
+#!/bin/bash
+
+CONF_FILE="$HOME/.config/hypr/wallpaper-engine.conf"
+[ -f "$CONF_FILE" ] && source "$CONF_FILE"
+
+find_steam_wp() {
+  local paths=(
+    "$HOME/.local/share/Steam"
+    "$HOME/.steam/steam"
+    "$HOME/.steam/root"
+  )
+  if [ -n "$STEAM_DIR" ]; then
+    paths=("$STEAM_DIR" "${paths[@]}")
+  fi
+  for steam_dir in "${paths[@]}"; do
+    local wp="$steam_dir/steamapps/workshop/content/431960"
+    if [ -d "$wp" ]; then
+      echo "$steam_dir"
+      return
+    fi
+    for lib in "$steam_dir"/steamapps/libraryfolders.vdf "$steam_dir"/config/libraryfolders.vdf; do
+      if [ -f "$lib" ]; then
+        while IFS= read -r path; do
+          local wp2="$path/steamapps/workshop/content/431960"
+          if [ -d "$wp2" ]; then
+            echo "$path"
+            return
+          fi
+        done < <(grep '"path"' "$lib" 2>/dev/null | sed 's/.*"\(.*\)".*/\1/')
+      fi
+    done
+  done
+}
+
+STEAM_DIR="${STEAM_DIR:-$(find_steam_wp)}"
+if [ -z "$STEAM_DIR" ]; then
+  notify-send "Wallpaper Engine" "Steam not found. Set STEAM_DIR environment variable."
+  exit 1
+fi
+
+STEAM_WP="$STEAM_DIR/steamapps/workshop/content/431960"
+WE_ASSETS="$STEAM_DIR/steamapps/common/wallpaper_engine"
+SERVICE_FILE="$HOME/.config/systemd/user/wallpaperengine-scene.service"
+MONITOR="${MONITOR:-$(hyprctl monitors -j 2>/dev/null | python3 -c 'import json,sys; print(json.load(sys.stdin)[0]["name"])' 2>/dev/null)}"
+FPS="${FPS:-30}"
+
+if [ -z "$MONITOR" ]; then
+  MONITOR="DP-1"
+fi
+
+if [ ! -d "$STEAM_WP" ]; then
+  notify-send "Wallpaper Engine" "No wallpapers found. Subscribe to some in Steam first."
+  exit 1
+fi
+
+mkdir -p "$HOME/.config/systemd/user"
+
+get_entries() {
+  find "$STEAM_WP" -maxdepth 2 -name "project.json" 2>/dev/null | sort | while read -r f; do
+    dir=$(dirname "$f")
+    title=$(python3 -c 'import json,sys; print(json.load(sys.stdin).get("title","Untitled"))' < "$f" 2>/dev/null)
+    has_video=$(ls "$dir"/*.mp4 "$dir"/*.webm 2>/dev/null | head -1)
+    id=$(basename "$dir")
+    if [ -n "$has_video" ]; then
+      echo "VIDEO|${title}|${has_video}|${id}"
+    else
+      echo "SCENE|${title}|${id}|${id}"
+    fi
+  done
+}
+
+stop_all() {
+  systemctl --user stop wallpaperengine-scene 2>/dev/null
+  pkill mpvpaper 2>/dev/null
+  sleep 0.5
+}
+
+start_video() {
+  local file="$1"
+  mpvpaper -f -o "no-audio --loop --panscan=1.0 --hwdec=auto --profile=fast --fps=15" "$MONITOR" "$file" &
+}
+
+start_scene() {
+  local wallpaper_id="$1"
+  cat > "$SERVICE_FILE" << EOF
+[Unit]
+Description=Wallpaper Engine Scene ($wallpaper_id)
+After=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/linux-wallpaperengine --screen-root $MONITOR --bg $wallpaper_id --assets-dir $WE_ASSETS --no-fullscreen-pause --fps $FPS
+Restart=on-failure
+RestartSec=5
+StartLimitIntervalSec=30
+StartLimitBurst=3
+
+[Install]
+WantedBy=default.target
+EOF
+  systemctl --user daemon-reload
+  systemctl --user start wallpaperengine-scene
+}
+
+ensure_waybar() {
+  sleep 1
+  if pgrep -x waybar > /dev/null; then
+    return
+  fi
+  if command -v waybar > /dev/null; then
+    waybar > /dev/null 2>&1 &
+  fi
+}
+
+update_hyprlock() {
+  local img="$1"
+  local lock_bg="$HOME/.cache/hyde/wallpapers/hyprlock.png"
+  if command -v ffmpeg > /dev/null && [ -f "$img" ]; then
+    mkdir -p "$(dirname "$lock_bg")"
+    rm -f "$lock_bg"
+    ffmpeg -y -i "$img" -vframes 1 -update 1 -q:v 2 "$lock_bg" > /dev/null 2>&1
+  fi
+  if command -v hyde-shell > /dev/null; then
+    hyde-shell wallpaper --cache current --backend hyprlock > /dev/null 2>&1
+  fi
+}
+
+entries=$(get_entries)
+
+if [ -z "$entries" ]; then
+  notify-send "Wallpaper Engine" "No wallpapers found in $STEAM_WP"
+  exit 1
+fi
+
+rofi_entries=$(echo "$entries" | while IFS='|' read -r type title file id; do
+  echo "[${type}] ${title} (${id})"
+done)
+
+selected=$(echo "$rofi_entries" | rofi -dmenu -i -p "Wallpaper Engine" -theme-str 'window {width: 50%;}')
+
+if [ -z "$selected" ]; then
+  exit 0
+fi
+
+selected_id=$(echo "$selected" | grep -oP '\(\K[0-9]+(?=\)$)')
+
+type=$(echo "$entries" | while IFS='|' read -r t title f id; do
+  if [ "$id" = "$selected_id" ]; then echo "$t"; fi
+done | head -1)
+
+file=$(echo "$entries" | while IFS='|' read -r t title f id; do
+  if [ "$id" = "$selected_id" ]; then echo "$f"; fi
+done | head -1)
+
+clean=$(echo "$selected" | sed 's/^\[VIDEO\] //;s/^\[SCENE\] //;s/ ([0-9]*)$//')
+
+if [ -z "$file" ]; then
+  notify-send "Wallpaper Engine" "Not found: $clean"
+  exit 1
+fi
+
+stop_all
+
+if [ "$type" = "VIDEO" ]; then
+  start_video "$file"
+  mkdir -p "$HOME/.config/hypr"
+  echo "$type|$file" > "$HOME/.config/hypr/wallpaper-engine-state"
+  update_hyprlock "$file"
+else
+  start_scene "$file"
+  sleep 3
+  if ! systemctl --user is-active wallpaperengine-scene > /dev/null 2>&1; then
+    systemctl --user stop wallpaperengine-scene 2>/dev/null
+    dir=$(find "$STEAM_WP" -maxdepth 2 -type d -name "$file" 2>/dev/null | head -1)
+    preview=$(ls "$dir"/preview.{jpg,png,gif} 2>/dev/null | head -1)
+    if [ -n "$preview" ]; then
+      mpvpaper -f -o "no-audio --loop --panscan=1.0 --hwdec=auto --profile=fast --fps=15" "$MONITOR" "$preview" &
+      echo "VIDEO|$preview" > "$HOME/.config/hypr/wallpaper-engine-state"
+      notify-send "Wallpaper Engine" "$clean (scene not supported, using preview image)"
+      update_hyprlock "$preview"
+    else
+      notify-send "Wallpaper Engine" "Scene crashed. Wallpaper not supported."
+      rm -f "$HOME/.config/hypr/wallpaper-engine-state"
+      exit 1
+    fi
+    ensure_waybar
+    exit 0
+  fi
+  mkdir -p "$HOME/.config/hypr"
+  echo "$type|$file" > "$HOME/.config/hypr/wallpaper-engine-state"
+  dir=$(find "$STEAM_WP" -maxdepth 2 -type d -name "$file" 2>/dev/null | head -1)
+  preview=$(ls "$dir"/preview.{jpg,png,gif} 2>/dev/null | head -1)
+  if [ -n "$preview" ]; then
+    update_hyprlock "$preview"
+  fi
+fi
+
+ensure_waybar
+notify-send "Wallpaper Engine" "$clean"
