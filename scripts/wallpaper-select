@@ -43,6 +43,7 @@ WE_ASSETS="$STEAM_DIR/steamapps/common/wallpaper_engine"
 SERVICE_FILE="$HOME/.config/systemd/user/wallpaperengine-scene.service"
 MONITOR="${MONITOR:-$(hyprctl monitors -j 2>/dev/null | python3 -c 'import json,sys; print(json.load(sys.stdin)[0]["name"])' 2>/dev/null)}"
 FPS="${FPS:-30}"
+MUTE_FILE="$HOME/.config/hypr/wallpaper-engine-muted"
 
 if [ -z "$MONITOR" ]; then
   MONITOR="DP-1"
@@ -82,6 +83,10 @@ start_video() {
 
 start_scene() {
   local wallpaper_id="$1"
+  local audio_flag=""
+  if [ -f "$MUTE_FILE" ]; then
+    audio_flag="--silent"
+  fi
   cat > "$SERVICE_FILE" << EOF
 [Unit]
 Description=Wallpaper Engine Scene ($wallpaper_id)
@@ -89,7 +94,7 @@ After=graphical-session.target
 
 [Service]
 Type=simple
-ExecStart=/usr/bin/linux-wallpaperengine --screen-root $MONITOR --bg $wallpaper_id --assets-dir $WE_ASSETS --no-fullscreen-pause --fps $FPS
+ExecStart=/usr/bin/linux-wallpaperengine --screen-root $MONITOR --bg $wallpaper_id --assets-dir $WE_ASSETS --no-fullscreen-pause --fps $FPS $audio_flag
 Restart=on-failure
 RestartSec=5
 StartLimitIntervalSec=30
@@ -207,6 +212,36 @@ do_rescan() {
   rm -f "$RESCAN_FLAG"
 }
 
+get_audio_status() {
+  if [ -f "$MUTE_FILE" ]; then
+    echo "muted"
+  else
+    echo "unmuted"
+  fi
+}
+
+toggle_audio() {
+  STATE_FILE="$HOME/.config/hypr/wallpaper-engine-state"
+  if [ ! -f "$STATE_FILE" ]; then
+    notify-send "Wallpaper Engine" "No wallpaper running"
+    return
+  fi
+
+  IFS='|' read -r type file < "$STATE_FILE"
+
+  if [ -f "$MUTE_FILE" ]; then
+    rm -f "$MUTE_FILE"
+    notify-send "Wallpaper Engine" "Audio unmuted"
+  else
+    touch "$MUTE_FILE"
+    notify-send "Wallpaper Engine" "Audio muted"
+  fi
+
+  if [ "$type" = "SCENE" ] && systemctl --user is-active wallpaperengine-scene > /dev/null 2>&1; then
+    start_scene "$file"
+  fi
+}
+
 if [ -f "$RESCAN_FLAG" ]; then
   do_rescan
 fi
@@ -222,7 +257,13 @@ rofi_entries=$(echo "$entries" | while IFS='|' read -r type title file id; do
   echo "[${type}] ${title} (${id})"
 done)
 
+audio_label="🔇  Mute audio"
+if [ -f "$MUTE_FILE" ]; then
+  audio_label="🔊  Unmute audio"
+fi
+
 rofi_entries="⟳  Rescan wallpapers
+${audio_label}
 ${rofi_entries}"
 
 selected=$(echo "$rofi_entries" | rofi -dmenu -i -p "Wallpaper Engine" -theme-str 'window {width: 50%;}')
@@ -233,6 +274,11 @@ fi
 
 if [ "$selected" = "⟳  Rescan wallpapers" ]; then
   touch "$RESCAN_FLAG"
+  exec "$0"
+fi
+
+if [ "$selected" = "🔇  Mute audio" ] || [ "$selected" = "🔊  Unmute audio" ]; then
+  toggle_audio
   exec "$0"
 fi
 
