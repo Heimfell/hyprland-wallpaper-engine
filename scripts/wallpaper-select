@@ -237,7 +237,9 @@ toggle_audio() {
     notify-send "Wallpaper Engine" "Audio muted"
   fi
 
-  if [ "$type" = "SCENE" ] && systemctl --user is-active wallpaperengine-scene > /dev/null 2>&1; then
+  if [ "$type" = "SCENE" ]; then
+    systemctl --user stop wallpaperengine-scene 2>/dev/null
+    sleep 0.5
     start_scene "$file"
   fi
 }
