@@ -19,10 +19,13 @@ Reads your Steam Workshop wallpapers, detects if they're video or scene type, an
 - Video wallpapers (mp4/webm) with hardware decoding
 - Scene wallpapers via linux-wallpaperengine + systemd
 - Rofi menu with all your subscribed wallpapers
+- Rescan wallpapers - detect new, removed or changed wallpapers from Steam Workshop
+- Audio mute/unmute toggle for scene wallpapers with music
 - Auto-restore on startup
 - Auto-detects monitor, Steam path, wallpaper type
 - Hyprlock integration (lock screen matches your wallpaper)
 - Falls back to preview image if a scene crashes
+- HyDE theme integration (auto-switch themes per wallpaper)
 - Works with any Hyprland setup
 
 ## Requirements
@@ -46,6 +49,19 @@ The installer handles everything: AUR dependencies, keybindings, hyprlock setup.
 
 ## Usage
 
+### Rofi Menu
+
+Press **Super+Alt+W** to open the wallpaper selector. The menu includes:
+
+| Option | Description |
+|---|---|
+| `⟳ Rescan wallpapers` | Rescan Steam Workshop for new/removed/changed wallpapers |
+| `🔇 Mute audio` / `🔊 Unmute audio` | Toggle audio on scene wallpapers |
+| `[VIDEO] Title` | Video wallpapers (mp4/webm) |
+| `[SCENE] Title` | Scene wallpapers (particles, landscapes, etc.) |
+
+### Commands
+
 | Command | Description |
 |---|---|
 | `wallpaper-select` | Open the rofi menu |
@@ -65,6 +81,8 @@ FPS=30            # scene wallpaper framerate
 INSTALL_DIR=      # default: ~/.local/bin
 ```
 
+Audio mute preference is saved automatically at `~/.config/hypr/wallpaper-engine-muted`.
+
 ## How it works
 
 The install script does a few non-obvious things:
@@ -77,6 +95,7 @@ When you pick a wallpaper:
 - **Video** → mpvpaper plays it as a Wayland background layer (hwdec + 15fps cap to save CPU)
 - **Scene** → systemd service starts linux-wallpaperengine with the correct wallpaper ID. If it crashes, falls back to the preview image
 - Your hyprlock background gets updated automatically
+- If muted, scene wallpapers start with `--silent` flag (no audio processing)
 
 ## Known issues
 
