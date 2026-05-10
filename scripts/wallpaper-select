@@ -125,6 +125,78 @@ update_hyprlock() {
   fi
 }
 
+CACHE_FILE="$HOME/.config/hypr/wallpaper-engine-cache"
+RESCAN_FLAG="$HOME/.config/hypr/.wallpaper-rescan"
+
+do_rescan() {
+  local old_ids=""
+  if [ -f "$CACHE_FILE" ]; then
+    old_ids=$(sort "$CACHE_FILE")
+  fi
+
+  local new_ids=""
+  new_ids=$(find "$STEAM_WP" -maxdepth 2 -name "project.json" 2>/dev/null | while read -r f; do
+    dir=$(dirname "$f")
+    id=$(basename "$dir")
+    title=$(python3 -c 'import json,sys; print(json.load(sys.stdin).get("title","Untitled"))' < "$f" 2>/dev/null)
+    has_video=$(ls "$dir"/*.mp4 "$dir"/*.webm 2>/dev/null | head -1)
+    if [ -n "$has_video" ]; then
+      echo "VIDEO|${id}|${title}"
+    else
+      echo "SCENE|${id}|${title}"
+    fi
+  done | sort)
+
+  echo "$new_ids" > "$CACHE_FILE"
+
+  local new_count=0
+  local removed_count=0
+  local new_names=""
+  local removed_names=""
+
+  local old_id_list=$(echo "$old_ids" | awk -F'|' '{print $2}')
+  local new_id_list=$(echo "$new_ids" | awk -F'|' '{print $2}')
+
+  while IFS='|' read -r type id title; do
+    [ -z "$id" ] && continue
+    if ! echo "$old_id_list" | grep -qx "$id" 2>/dev/null; then
+      new_count=$((new_count + 1))
+      new_names="${new_names}  + ${title}\n"
+    fi
+  done <<< "$new_ids"
+
+  while IFS='|' read -r type id title; do
+    [ -z "$id" ] && continue
+    if ! echo "$new_id_list" | grep -qx "$id" 2>/dev/null; then
+      removed_count=$((removed_count + 1))
+      removed_names="${removed_names}  - ${title}\n"
+    fi
+  done <<< "$old_ids"
+
+  local total=$(echo "$new_ids" | grep -c '.' 2>/dev/null || echo 0)
+  local msg="Total: ${total} wallpapers"
+
+  if [ "$new_count" -gt 0 ] || [ "$removed_count" -gt 0 ]; then
+    msg="${msg}\n\nChanges:"
+    [ "$new_count" -gt 0 ] && msg="${msg}\n${new_count} new:\n${new_names}"
+    [ "$removed_count" -gt 0 ] && msg="${msg}\n${removed_count} removed:\n${removed_names}"
+  else
+    old_total=$(echo "$old_ids" | grep -c '.' 2>/dev/null || echo 0)
+    if [ "$old_total" -eq 0 ]; then
+      msg="${msg}\n(first scan)"
+    else
+      msg="${msg}\nNo changes detected"
+    fi
+  fi
+
+  notify-send "Wallpaper Engine - Rescan" "$msg"
+  rm -f "$RESCAN_FLAG"
+}
+
+if [ -f "$RESCAN_FLAG" ]; then
+  do_rescan
+fi
+
 entries=$(get_entries)
 
 if [ -z "$entries" ]; then
@@ -136,10 +208,18 @@ rofi_entries=$(echo "$entries" | while IFS='|' read -r type title file id; do
   echo "[${type}] ${title} (${id})"
 done)
 
+rofi_entries="⟳  Rescan wallpapers
+${rofi_entries}"
+
 selected=$(echo "$rofi_entries" | rofi -dmenu -i -p "Wallpaper Engine" -theme-str 'window {width: 50%;}')
 
 if [ -z "$selected" ]; then
   exit 0
+fi
+
+if [ "$selected" = "⟳  Rescan wallpapers" ]; then
+  touch "$RESCAN_FLAG"
+  exec "$0"
 fi
 
 selected_id=$(echo "$selected" | grep -oP '\(\K[0-9]+(?=\)$)')
