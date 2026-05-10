@@ -125,6 +125,23 @@ update_hyprlock() {
   fi
 }
 
+apply_theme() {
+  local wp_id="$1"
+  local theme_map="$HOME/.config/hyde/wallpaper-theme-map.conf"
+  if [ -f "$theme_map" ]; then
+    while IFS='|' read -r map_id map_theme; do
+      if [ "$map_id" = "$wp_id" ] && [ -n "$map_theme" ]; then
+        if command -v hydectl > /dev/null; then
+          notify-send "HyDE Theme" "Applying theme: $map_theme..."
+          hydectl theme set "$map_theme"
+          notify-send "HyDE Theme" "Applied theme: $map_theme"
+        fi
+        break
+      fi
+    done < "$theme_map"
+  fi
+}
+
 CACHE_FILE="$HOME/.config/hypr/wallpaper-engine-cache"
 RESCAN_FLAG="$HOME/.config/hypr/.wallpaper-rescan"
 
@@ -181,7 +198,7 @@ do_rescan() {
     [ "$new_count" -gt 0 ] && msg="${msg}\n${new_count} new:\n${new_names}"
     [ "$removed_count" -gt 0 ] && msg="${msg}\n${removed_count} removed:\n${removed_names}"
   else
-    old_total=$(echo "$old_ids" | grep -c '.' 2>/dev/null || echo 0)
+    local old_total=$(echo "$old_ids" | grep -c '.' 2>/dev/null || echo 0)
     if [ "$old_total" -eq 0 ]; then
       msg="${msg}\n(first scan)"
     else
@@ -241,6 +258,8 @@ fi
 
 stop_all
 
+apply_theme "$selected_id"
+
 if [ "$type" = "VIDEO" ]; then
   start_video "$file"
   mkdir -p "$HOME/.config/hypr"
@@ -256,7 +275,6 @@ else
     if [ -n "$preview" ]; then
       mpvpaper -f -o "no-audio --loop --panscan=1.0 --hwdec=auto --profile=fast --fps=15" "$MONITOR" "$preview" &
       echo "VIDEO|$preview" > "$HOME/.config/hypr/wallpaper-engine-state"
-      notify-send "Wallpaper Engine" "$clean (scene not supported, using preview image)"
       update_hyprlock "$preview"
     else
       notify-send "Wallpaper Engine" "Scene crashed. Wallpaper not supported."
@@ -264,6 +282,7 @@ else
       exit 1
     fi
     ensure_waybar
+    notify-send "Wallpaper Engine" "$clean (scene not supported, using preview image)"
     exit 0
   fi
   mkdir -p "$HOME/.config/hypr"
