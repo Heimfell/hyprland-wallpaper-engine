@@ -3,46 +3,45 @@
 CONF_FILE="$HOME/.config/hypr/wallpaper-engine.conf"
 [ -f "$CONF_FILE" ] && source "$CONF_FILE"
 
-STATE_FILE="$HOME/.config/hypr/wallpaper-engine-state"
+STATE_DIR="$HOME/.config/hypr/wallpaper-engine-states"
 STEAM_DIR="${STEAM_DIR:-$HOME/.local/share/Steam}"
 STEAM_WP="$STEAM_DIR/steamapps/workshop/content/431960"
 WE_ASSETS="$STEAM_DIR/steamapps/common/wallpaper_engine"
-MONITOR="${MONITOR:-$(hyprctl monitors -j 2>/dev/null | python3 -c 'import json,sys; print(json.load(sys.stdin)[0]["name"])' 2>/dev/null)}"
 FPS="${FPS:-30}"
 
-if [ -z "$MONITOR" ]; then
-  MONITOR="DP-1"
-fi
+get_all_monitors() {
+  hyprctl monitors -j 2>/dev/null | python3 -c 'import json,sys; [print(m["name"]) for m in json.load(sys.stdin)]' 2>/dev/null
+}
 
 action="${1:-}"
 
 case "$action" in
   stop)
-    systemctl --user stop wallpaperengine-scene 2>/dev/null
+    for mon in $(get_all_monitors); do
+      mon_safe=$(echo "$mon" | tr '-' '_')
+      systemctl --user stop "wallpaperengine-scene-${mon_safe}" 2>/dev/null
+    done
     pkill mpvpaper 2>/dev/null
-    notify-send "Wallpaper Engine" "Stopped"
+    notify-send "Wallpaper Engine" "Stopped all wallpapers"
     ;;
   start)
-    if [ ! -f "$STATE_FILE" ]; then
-      echo "No previous wallpaper. Run wallpaper-select first."
-      exit 1
-    fi
-    IFS='|' read -r type file < "$STATE_FILE"
-    if [ "$type" = "VIDEO" ]; then
-      if [ -f "$file" ]; then
-        mpvpaper -f -o "no-audio --loop --panscan=1.0 --hwdec=auto --profile=fast --fps=15" "$MONITOR" "$file" &
+    for mon in $(get_all_monitors); do
+      mon_safe=$(echo "$mon" | tr '-' '_')
+      state_file="$STATE_DIR/${mon_safe}"
+      service_name="wallpaperengine-scene-${mon_safe}"
+      [ -f "$state_file" ] || continue
+      IFS='|' read -r type file < "$state_file"
+      if [ "$type" = "VIDEO" ]; then
+        if [ -f "$file" ]; then
+          mpvpaper -f -o "no-audio --loop --panscan=1.0 --hwdec=auto --profile=fast --fps=15" "$mon" "$file" &
+        fi
       else
-        echo "Video file not found: $file"
-        exit 1
+        if [ -f "$HOME/.config/systemd/user/${service_name}.service" ]; then
+          systemctl --user start "$service_name" 2>/dev/null
+        fi
       fi
-    else
-      if [ ! -f "$HOME/.config/systemd/user/wallpaperengine-scene.service" ]; then
-        echo "Scene service not configured. Run wallpaper-select first."
-        exit 1
-      fi
-      systemctl --user start wallpaperengine-scene 2>/dev/null
-    fi
-    notify-send "Wallpaper Engine" "Resumed"
+    done
+    notify-send "Wallpaper Engine" "Resumed all wallpapers"
     ;;
   *)
     exec wallpaper-select

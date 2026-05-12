@@ -40,21 +40,41 @@ fi
 
 STEAM_WP="$STEAM_DIR/steamapps/workshop/content/431960"
 WE_ASSETS="$STEAM_DIR/steamapps/common/wallpaper_engine"
-SERVICE_FILE="$HOME/.config/systemd/user/wallpaperengine-scene.service"
-MONITOR="${MONITOR:-$(hyprctl monitors -j 2>/dev/null | python3 -c 'import json,sys; print(json.load(sys.stdin)[0]["name"])' 2>/dev/null)}"
+STATE_DIR="$HOME/.config/hypr/wallpaper-engine-states"
 FPS="${FPS:-30}"
 MUTE_FILE="$HOME/.config/hypr/wallpaper-engine-muted"
 
+mkdir -p "$STATE_DIR" "$HOME/.config/systemd/user"
+
+get_all_monitors() {
+  hyprctl monitors -j 2>/dev/null | python3 -c 'import json,sys; [print(m["name"]) for m in json.load(sys.stdin)]' 2>/dev/null
+}
+
+MONITOR="${MONITOR:-}"
 if [ -z "$MONITOR" ]; then
-  MONITOR="DP-1"
+  monitors=($(get_all_monitors))
+  if [ ${#monitors[@]} -eq 0 ]; then
+    notify-send "Wallpaper Engine" "No monitors detected"
+    exit 1
+  elif [ ${#monitors[@]} -eq 1 ]; then
+    MONITOR="${monitors[0]}"
+  else
+    selected_monitor=$(printf '%s\n' "${monitors[@]}" | rofi -dmenu -i -p "Select monitor" -theme-str 'window {width: 30%;}')
+    if [ -z "$selected_monitor" ]; then
+      exit 0
+    fi
+    MONITOR="$selected_monitor"
+  fi
 fi
+
+MONITOR_SAFE=$(echo "$MONITOR" | tr '-' '_')
+STATE_FILE="$STATE_DIR/${MONITOR_SAFE}"
+SERVICE_FILE="$HOME/.config/systemd/user/wallpaperengine-scene-${MONITOR_SAFE}.service"
 
 if [ ! -d "$STEAM_WP" ]; then
   notify-send "Wallpaper Engine" "No wallpapers found. Subscribe to some in Steam first."
   exit 1
 fi
-
-mkdir -p "$HOME/.config/systemd/user"
 
 get_entries() {
   find "$STEAM_WP" -maxdepth 2 -name "project.json" 2>/dev/null | sort | while read -r f; do
@@ -70,31 +90,43 @@ get_entries() {
   done
 }
 
+stop_monitor() {
+  local mon="$1"
+  local mon_safe=$(echo "$mon" | tr '-' '_')
+  systemctl --user stop "wallpaperengine-scene-${mon_safe}" 2>/dev/null
+}
+
 stop_all() {
-  systemctl --user stop wallpaperengine-scene 2>/dev/null
+  for mon in $(get_all_monitors); do
+    stop_monitor "$mon"
+  done
   pkill mpvpaper 2>/dev/null
   sleep 0.5
 }
 
 start_video() {
   local file="$1"
-  mpvpaper -f -o "no-audio --loop --panscan=1.0 --hwdec=auto --profile=fast --fps=15" "$MONITOR" "$file" &
+  local mon="$2"
+  mpvpaper -f -o "no-audio --loop --panscan=1.0 --hwdec=auto --profile=fast --fps=15" "$mon" "$file" &
 }
 
 start_scene() {
   local wallpaper_id="$1"
+  local mon="$2"
+  local mon_safe=$(echo "$mon" | tr '-' '_')
+  local svc="$HOME/.config/systemd/user/wallpaperengine-scene-${mon_safe}.service"
   local audio_flag=""
   if [ -f "$MUTE_FILE" ]; then
     audio_flag="--silent"
   fi
-  cat > "$SERVICE_FILE" << EOF
+  cat > "$svc" << EOF
 [Unit]
-Description=Wallpaper Engine Scene ($wallpaper_id)
+Description=Wallpaper Engine Scene ($wallpaper_id) on $mon
 After=graphical-session.target
 
 [Service]
 Type=simple
-ExecStart=/usr/bin/linux-wallpaperengine --screen-root $MONITOR --bg $wallpaper_id --assets-dir $WE_ASSETS --no-fullscreen-pause --fps $FPS $audio_flag
+ExecStart=/usr/bin/linux-wallpaperengine --screen-root $mon --bg $wallpaper_id --assets-dir $WE_ASSETS --no-fullscreen-pause --fps $FPS $audio_flag
 Restart=on-failure
 RestartSec=5
 StartLimitIntervalSec=30
@@ -104,7 +136,7 @@ StartLimitBurst=3
 WantedBy=default.target
 EOF
   systemctl --user daemon-reload
-  systemctl --user start wallpaperengine-scene
+  systemctl --user start "wallpaperengine-scene-${mon_safe}"
 }
 
 ensure_waybar() {
@@ -212,18 +244,9 @@ do_rescan() {
   rm -f "$RESCAN_FLAG"
 }
 
-get_audio_status() {
-  if [ -f "$MUTE_FILE" ]; then
-    echo "muted"
-  else
-    echo "unmuted"
-  fi
-}
-
 toggle_audio() {
-  STATE_FILE="$HOME/.config/hypr/wallpaper-engine-state"
   if [ ! -f "$STATE_FILE" ]; then
-    notify-send "Wallpaper Engine" "No wallpaper running"
+    notify-send "Wallpaper Engine" "No wallpaper running on $MONITOR"
     return
   fi
 
@@ -238,9 +261,9 @@ toggle_audio() {
   fi
 
   if [ "$type" = "SCENE" ]; then
-    systemctl --user stop wallpaperengine-scene 2>/dev/null
+    stop_monitor "$MONITOR"
     sleep 0.5
-    start_scene "$file"
+    start_scene "$file" "$MONITOR"
   fi
 }
 
@@ -268,7 +291,7 @@ rofi_entries="⟳  Rescan wallpapers
 ${audio_label}
 ${rofi_entries}"
 
-selected=$(echo "$rofi_entries" | rofi -dmenu -i -p "Wallpaper Engine" -theme-str 'window {width: 50%;}')
+selected=$(echo "$rofi_entries" | rofi -dmenu -i -p "Wallpaper Engine ($MONITOR)" -theme-str 'window {width: 50%;}')
 
 if [ -z "$selected" ]; then
   exit 0
@@ -301,37 +324,35 @@ if [ -z "$file" ]; then
   exit 1
 fi
 
-stop_all
+stop_monitor "$MONITOR"
 
 apply_theme "$selected_id"
 
 if [ "$type" = "VIDEO" ]; then
-  start_video "$file"
-  mkdir -p "$HOME/.config/hypr"
-  echo "$type|$file" > "$HOME/.config/hypr/wallpaper-engine-state"
+  start_video "$file" "$MONITOR"
+  echo "$type|$file" > "$STATE_FILE"
   update_hyprlock "$file"
 else
-  start_scene "$file"
+  start_scene "$file" "$MONITOR"
   sleep 3
-  if ! systemctl --user is-active wallpaperengine-scene > /dev/null 2>&1; then
-    systemctl --user stop wallpaperengine-scene 2>/dev/null
+  if ! systemctl --user is-active "wallpaperengine-scene-${MONITOR_SAFE}" > /dev/null 2>&1; then
+    stop_monitor "$MONITOR"
     dir=$(find "$STEAM_WP" -maxdepth 2 -type d -name "$file" 2>/dev/null | head -1)
     preview=$(ls "$dir"/preview.{jpg,png,gif} 2>/dev/null | head -1)
     if [ -n "$preview" ]; then
       mpvpaper -f -o "no-audio --loop --panscan=1.0 --hwdec=auto --profile=fast --fps=15" "$MONITOR" "$preview" &
-      echo "VIDEO|$preview" > "$HOME/.config/hypr/wallpaper-engine-state"
+      echo "VIDEO|$preview" > "$STATE_FILE"
       update_hyprlock "$preview"
     else
       notify-send "Wallpaper Engine" "Scene crashed. Wallpaper not supported."
-      rm -f "$HOME/.config/hypr/wallpaper-engine-state"
+      rm -f "$STATE_FILE"
       exit 1
     fi
     ensure_waybar
     notify-send "Wallpaper Engine" "$clean (scene not supported, using preview image)"
     exit 0
   fi
-  mkdir -p "$HOME/.config/hypr"
-  echo "$type|$file" > "$HOME/.config/hypr/wallpaper-engine-state"
+  echo "$type|$file" > "$STATE_FILE"
   dir=$(find "$STEAM_WP" -maxdepth 2 -type d -name "$file" 2>/dev/null | head -1)
   preview=$(ls "$dir"/preview.{jpg,png,gif} 2>/dev/null | head -1)
   if [ -n "$preview" ]; then
@@ -340,4 +361,4 @@ else
 fi
 
 ensure_waybar
-notify-send "Wallpaper Engine" "$clean"
+notify-send "Wallpaper Engine" "$clean on $MONITOR"
