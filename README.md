@@ -18,11 +18,12 @@ Reads your Steam Workshop wallpapers, detects if they're video or scene type, an
 
 - Video wallpapers (mp4/webm) with hardware decoding
 - Scene wallpapers via linux-wallpaperengine + systemd
+- **Multi-monitor support** - independent wallpapers per monitor
 - Rofi menu with all your subscribed wallpapers
 - Rescan wallpapers - detect new, removed or changed wallpapers from Steam Workshop
 - Audio mute/unmute toggle for scene wallpapers with music
-- Auto-restore on startup
-- Auto-detects monitor, Steam path, wallpaper type
+- Auto-restore on startup (all monitors)
+- Auto-detects monitors, Steam path, wallpaper type
 - Hyprlock integration (lock screen matches your wallpaper)
 - Falls back to preview image if a scene crashes
 - HyDE theme integration (auto-switch themes per wallpaper)
@@ -51,7 +52,9 @@ The installer handles everything: AUR dependencies, keybindings, hyprlock setup.
 
 ### Rofi Menu
 
-Press **Super+Alt+W** to open the wallpaper selector. The menu includes:
+Press **Super+Alt+W** to open the wallpaper selector.
+
+If you have multiple monitors, you'll first be asked which monitor to configure. Then the wallpaper menu opens:
 
 | Option | Description |
 |---|---|
@@ -60,15 +63,30 @@ Press **Super+Alt+W** to open the wallpaper selector. The menu includes:
 | `[VIDEO] Title` | Video wallpapers (mp4/webm) |
 | `[SCENE] Title` | Scene wallpapers (particles, landscapes, etc.) |
 
+Each monitor keeps its own wallpaper independently.
+
 ### Commands
 
 | Command | Description |
 |---|---|
-| `wallpaper-select` | Open the rofi menu |
-| `wallpaper stop` | Stop current wallpaper |
-| `wallpaper start` | Resume last wallpaper |
+| `wallpaper-select` | Open the rofi menu (asks for monitor if multiple) |
+| `wallpaper stop` | Stop wallpapers on all monitors |
+| `wallpaper start` | Resume wallpapers on all monitors |
 | `wallpaper-list` | List all wallpapers |
 | `wallpaper-status` | Check running status |
+
+### Multi-monitor
+
+Each monitor has its own state file and systemd service:
+
+```
+~/.config/hypr/wallpaper-engine-states/DP_1       # wallpaper state for DP-1
+~/.config/hypr/wallpaper-engine-states/HDMI_A_2   # wallpaper state for HDMI-A-2
+~/.config/systemd/user/wallpaperengine-scene-DP_1.service
+~/.config/systemd/user/wallpaperengine-scene-HDMI_A_2.service
+```
+
+You can set different wallpapers on each monitor. On startup, `wallpaper-restore` restores all of them.
 
 ## Config
 
@@ -76,7 +94,7 @@ Edit `~/.config/hypr/wallpaper-engine.conf`:
 
 ```
 STEAM_DIR=        # leave empty for auto-detect
-MONITOR=          # leave empty for auto-detect
+MONITOR=          # leave empty to pick from menu, or set a specific monitor
 FPS=30            # scene wallpaper framerate
 INSTALL_DIR=      # default: ~/.local/bin
 ```
@@ -89,11 +107,11 @@ The install script does a few non-obvious things:
 
 1. Installs `mpvpaper` and `linux-wallpaperengine-git` from AUR
 2. Creates symlinks for `assets/models`, `assets/materials`, etc. - this fixes the `solidlayer.json not found` error on Wayland
-3. Scene wallpapers run as a systemd user service (survives terminal closure)
+3. Scene wallpapers run as systemd user services, one per monitor (survives terminal closure)
 
 When you pick a wallpaper:
-- **Video** → mpvpaper plays it as a Wayland background layer (hwdec + 15fps cap to save CPU)
-- **Scene** → systemd service starts linux-wallpaperengine with the correct wallpaper ID. If it crashes, falls back to the preview image
+- **Video** → mpvpaper plays it as a Wayland background layer on the selected monitor (hwdec + 15fps cap to save CPU)
+- **Scene** → systemd service starts linux-wallpaperengine with `--screen-root <monitor>`. If it crashes, falls back to the preview image
 - Your hyprlock background gets updated automatically
 - If muted, scene wallpapers start with `--silent` flag (no audio processing)
 
@@ -108,6 +126,8 @@ When you pick a wallpaper:
 Simple scenes with particles, weather, landscapes work fine. Video wallpapers always work. When a scene crashes, you get the preview image instead of a black screen.
 
 **High CPU?** Video wallpapers are capped at 15fps with hardware decoding. If it's still too much, stop it with Super+Alt+S.
+
+**Only one scene wallpaper plays audio at a time.** linux-wallpaperengine handles audio mixing internally. If you need silence on a specific monitor, use the mute toggle.
 
 ## Uninstall
 
